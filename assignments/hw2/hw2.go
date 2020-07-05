@@ -21,14 +21,14 @@ func IsPredecessor(g graph.Graph, s graph.Node, d graph.Node) bool {
 
 func CheckForbiddenBF(nodes []graph.Node, path Shortest, weight Weighting, pre [][]bool, forbidden []bool) {
 	fmt.Println(nodes)
-	println("Looking For Forbidden Nodes...")
+	// println("Looking For Forbidden Nodes...")
 	for _, n := range nodes {
 		i := path.indexOf[n.ID()]
 		forbidden[i] = false
 		for _, k := range nodes {
 			j := path.indexOf[k.ID()]
 			if pre[i][j] {
-				println("Analyzing edge from " + strconv.Itoa(k.ID()) + " to " + strconv.Itoa(n.ID()))
+				// println("Analyzing edge from " + strconv.Itoa(k.ID()) + " to " + strconv.Itoa(n.ID()))
 				w, ok := weight(k, n)
 				if !ok {
 					panic("bf: unexpected invalid weight")
@@ -38,7 +38,7 @@ func CheckForbiddenBF(nodes []graph.Node, path Shortest, weight Weighting, pre [
 				}
 				if path.dist[path.indexOf[n.ID()]] > (path.dist[path.indexOf[k.ID()]] + w) {
 					distTon := strconv.FormatFloat(path.dist[path.indexOf[n.ID()]], 'f', -1, 64)
-					println(strconv.Itoa(path.indexOf[n.ID()]) + " is forbidden: " + distTon)
+					println(strconv.Itoa(n.ID()) + " is forbidden: " + distTon)
 					forbidden[i] = true
 					continue
 				}
@@ -47,26 +47,30 @@ func CheckForbiddenBF(nodes []graph.Node, path Shortest, weight Weighting, pre [
 	}
 }
 
-func OrBoolVec(forb_vec []bool) bool {
-	local_vec := make([]bool, len(forb_vec))
-	result := make(chan int, len(forb_vec))
-	copy(local_vec, forb_vec)
-	for h := 1; h <= int(math.Ceil(math.Log2(float64(len(forb_vec))))); h++ {
-		for i := 0; i < len(forb_vec); i++ {
+func OrBoolVec(bool_vec []bool) bool {
+	local_vec := make([]bool, len(bool_vec))
+	result := make(chan int, len(bool_vec))
+	copy(local_vec, bool_vec)
+	for h := 1; h <= int(math.Ceil(math.Log2(float64(len(bool_vec))))); h++ {
+		fmt.Println(len(bool_vec) / int(math.Ceil(math.Exp2(float64(h)))))
+		it_vec := make([]bool, len(bool_vec))
+		copy(it_vec, local_vec)
+		for i := 0; i < len(bool_vec); i++ {
 			go func(i int) {
-				if i < len(forb_vec)/int(math.Ceil(math.Exp2(float64(h)))) {
-					if 2*i == len(forb_vec)-1 {
-						local_vec[i] = local_vec[2*1]
+				if i < int(math.Ceil(float64(len(bool_vec))/math.Exp2(float64(h)))) {
+					if 2*i == len(bool_vec)-1 {
+						local_vec[i] = it_vec[2*i]
 					} else {
-						local_vec[i] = local_vec[2*i] || local_vec[2*(i+1)-1]
+						local_vec[i] = it_vec[2*i] || it_vec[2*(i+1)-1]
 					}
 				}
 				result <- i
 			}(i)
 		}
-		for i := 0; i < len(forb_vec); i++ {
+		for i := 0; i < len(bool_vec); i++ {
 			<-result
 		}
+		fmt.Println(local_vec)
 	}
 	return local_vec[0]
 }
@@ -139,7 +143,6 @@ func BellmanFord(s graph.Node, g graph.Graph) Shortest {
 								min = path.dist[path.indexOf[k.ID()]] + w
 								println("Overwrite distance to node " + strconv.Itoa(n.ID()) + " to " + strconv.FormatFloat(min, 'f', -1, 64))
 								path.set(path.indexOf[n.ID()], min, path.indexOf[k.ID()])
-								println(strconv.FormatFloat(path.dist[path.indexOf[n.ID()]], 'f', -1, 64))
 							}
 						}
 					}
@@ -154,20 +157,23 @@ func BellmanFord(s graph.Node, g graph.Graph) Shortest {
 		}
 
 		CheckForbiddenBF(nodes, path, weight, pre, forbidden)
+		fmt.Println(forbidden)
 
 		if SomeForbidden = OrBoolVec(forbidden); SomeForbidden {
 			println("Forbidden nodes detected")
 		}
+
+		fmt.Println(SomeForbidden)
 	}
 	return path
 }
 
 func relax(d graph.Node, c float64, s int, path Shortest, delta float64, B map[int]*priorityQueue) {
 	if c < path.dist[path.indexOf[d.ID()]] {
-		fmt.Println("Relaxing node " + strconv.Itoa(d.ID()))
+		// fmt.Println("Relaxing node " + strconv.Itoa(d.ID()))
 		path.set(path.indexOf[d.ID()], c, s)
 		if B[int(c/delta)] == nil {
-			fmt.Println("Created bucket: " + strconv.Itoa(int(c/delta)))
+			// fmt.Println("Created bucket: " + strconv.Itoa(int(c/delta)))
 			B[int(c/delta)] = &priorityQueue{}
 		}
 		heap.Push(B[int(c/delta)], distanceNode{node: d, dist: c})
@@ -249,7 +255,7 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 
 	i := 0
 	for len(B) != 0 {
-		fmt.Println("Checking bucket " + strconv.Itoa(i))
+		// fmt.Println("Checking bucket " + strconv.Itoa(i))
 		S := priorityQueue{}
 		req := deltaQueue{}
 		fmt.Println(B[i].Len())
