@@ -1,8 +1,6 @@
 package hw2
 
 import (
-	"container/heap"
-
 	"github.com/gonum/graph"
 
 	"math"
@@ -22,7 +20,7 @@ func IsPredecessor(g graph.Graph, s graph.Node, d graph.Node, weight Weighting) 
 // modified by reference.[O(n)]
 func CheckForbiddenBF(nodes []graph.Node, path Shortest, weight Weighting, pre [][]bool, forbidden []bool) {
 	// Auxiliar signal to wait for all threads
-	result := make(chan int, len(nodes))
+	bf_thread := make(chan bool, len(nodes))
 	for _, n := range nodes {
 		i := path.indexOf[n.ID()]
 		// Spawn threads for the analysis of each individual node, this does a sweep on al nodes( O(n) )
@@ -42,12 +40,12 @@ func CheckForbiddenBF(nodes []graph.Node, path Shortest, weight Weighting, pre [
 					}
 				}
 			}
-			result <- i
+			bf_thread <- false
 		}(i, n)
 	}
 	// Wait for all spawned threads to complete.
 	for i := 0; i < len(nodes); i++ {
-		<-result
+		<-bf_thread
 	}
 }
 
@@ -57,7 +55,7 @@ func OrBoolVec(bool_vec []bool) bool {
 	local_vec := make([]bool, len(bool_vec))
 	it_vec := make([]bool, len(bool_vec))
 	// Auxiliar variable for thread synchronization
-	result := make(chan int, len(bool_vec))
+	thread := make(chan bool, len(bool_vec))
 	// Slices in parameters are always sent by reference, so we need to clone
 	// it to avoid messing with the original indormation
 	copy(local_vec, bool_vec)
@@ -76,13 +74,13 @@ func OrBoolVec(bool_vec []bool) bool {
 						local_vec[i] = it_vec[2*i] || it_vec[2*(i+1)-1]
 					}
 				}
-				result <- i
+				thread <- false
 			}(i)
 		}
 
 		// Wait for al spawned threads to complete
 		for i := 0; i < len(bool_vec); i++ {
-			<-result
+			<-thread
 		}
 	}
 	return local_vec[0]
@@ -109,7 +107,7 @@ func BellmanFord(s graph.Node, g graph.Graph) Shortest {
 	nodes := g.Nodes()
 	path := newShortestFrom(s, nodes)
 
-	result := make(chan int, len(nodes))
+	bf_thread := make(chan bool, len(nodes))
 	// For simplicity, compute predecesor matrix
 	pre := make([][]bool, len(nodes))
 
@@ -143,14 +141,14 @@ func BellmanFord(s graph.Node, g graph.Graph) Shortest {
 				}
 
 			}
-			result <- i
+			bf_thread <- false
 		}(i, n)
 
 	}
 
 	// Wait for all spawned threds to complete.
 	for i := 0; i < len(nodes); i++ {
-		<-result
+		<-bf_thread
 	}
 
 	// If any nodes contain negative edges, panic
@@ -188,13 +186,13 @@ func BellmanFord(s graph.Node, g graph.Graph) Shortest {
 						}
 					}
 				}
-				result <- i
+				bf_thread <- false
 			}(i, n)
 
 		}
 
 		for i := 0; i < len(nodes); i++ {
-			<-result
+			<-bf_thread
 		}
 
 		// Update to the new set of forbidden nodes
@@ -205,15 +203,15 @@ func BellmanFord(s graph.Node, g graph.Graph) Shortest {
 }
 
 // Helper method to update values in the Shortest variable given the the relaxation criteria.
-func relax(d graph.Node, c float64, s int, path Shortest, delta float64, B map[int]*priorityQueue) {
+func relax(d graph.Node, c float64, s int, path Shortest, delta float64, B map[int]map[graph.Node]bool) {
 
 	if c < path.dist[path.indexOf[d.ID()]] {
 		path.set(path.indexOf[d.ID()], c, s)
 		// if current bucket doesn't exist, create it
 		if B[int(c/delta)] == nil {
-			B[int(c/delta)] = &priorityQueue{}
+			B[int(c/delta)] = make(map[graph.Node]bool)
 		}
-		heap.Push(B[int(c/delta)], distanceNode{node: d, dist: c})
+		B[int(c/delta)][d] = true
 	}
 }
 
@@ -238,7 +236,7 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 	nodes := g.Nodes()
 	path := newShortestFrom(s, nodes)
 
-	result := make(chan int, len(nodes))
+	ds_thread := make(chan bool, len(nodes))
 	// For simplicity, compute heavy/light matrix
 	heavy := make([][]bool, len(nodes))
 	light := make([][]bool, len(nodes))
@@ -273,11 +271,11 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 					light[i][j] = false
 				}
 			}
-			result <- i
+			ds_thread <- false
 		}(i, n)
 	}
 	for i := 0; i < len(nodes); i++ {
-		<-result
+		<-ds_thread
 	}
 
 	// If any elements have negative edges associated with them, panic [O(logn)]
@@ -286,22 +284,25 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 	}
 
 	// This will be our Buckets variable
-	B := make(map[int]*priorityQueue)
+	B := make(map[int]map[graph.Node]bool)
 
 	// Create first bucket and insert source element into it
-	B[0] = &priorityQueue{}
-	heap.Push(B[0], distanceNode{node: s, dist: 0})
+	B[0] = make(map[graph.Node]bool)
+	B[0][s] = true
 
 	i := 0
 
 	//This loop will execute until all buckets have been deleted.
 	for len(B) != 0 {
-		S := priorityQueue{}
-		req := deltaQueue{}
-		for B[i].Len() != 0 {
-			req = deltaQueue{}
-			for B[i].Len() != 0 {
-				n := heap.Pop(B[i]).(distanceNode).node
+		S := make(map[graph.Node]bool)
+		req := make(map[deltaEdge]bool)
+		for B[i] != nil {
+			req = make(map[deltaEdge]bool)
+
+			// ds_thread := make(chan bool, len(B[i]))
+			for n, _ := range B[i] {
+
+				// go func(n graph.Node) {
 				k := path.indexOf[n.ID()]
 				for _, v := range g.From(n) {
 					j := path.indexOf[v.ID()]
@@ -311,41 +312,73 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 							panic("delta-step: unexpected invalid weight")
 						}
 						newCost := w + path.dist[k]
-						heap.Push(&req, deltaEdge{dest: v, dist: newCost, source: n})
+						req[deltaEdge{dest: v, dist: newCost, source: n}] = true
 					}
 				}
+				// ds_thread <- false
+				// }(n)
 
-				heap.Push(&S, distanceNode{node: n, dist: 0})
+				S[n] = true
 			}
 
+			// for i := 0; i < len(B[i]); i++ {
+			// 	<-ds_thread
+			// }
+
+			delete(B, i)
+
+			// ds_thread := make(chan bool, len(req))
 			// Relax all request from light edges in B[i]
-			for req.Len() != 0 {
-				request := heap.Pop(&req).(deltaEdge)
+			for request, _ := range req {
+				// go func(request deltaEdge) {
 				relax(request.dest, request.dist, path.indexOf[request.source.ID()], path, delta, B)
+				// ds_thread <- false
+				// }(request)
 			}
+
+			// for i := 0; i < len(ds_thread); i++ {
+			// 	<-ds_thread
+			// }
+
 		}
 
-		req = deltaQueue{}
-		for S.Len() != 0 {
-			n := heap.Pop(&S).(distanceNode).node
-			k := path.indexOf[n.ID()]
-			for _, v := range g.From(n) {
-				j := path.indexOf[v.ID()]
-				if heavy[k][j] {
-					w, ok := weight(n, v)
-					if !ok {
-						panic("delta-step: unexpected invalid weight")
+		req = make(map[deltaEdge]bool)
+
+		ds_thread := make(chan bool, len(S))
+		for n, _ := range S {
+			delete(S, n)
+			go func(n graph.Node) {
+				k := path.indexOf[n.ID()]
+				for _, v := range g.From(n) {
+					j := path.indexOf[v.ID()]
+					if heavy[k][j] {
+						w, ok := weight(n, v)
+						if !ok {
+							panic("delta-step: unexpected invalid weight")
+						}
+						newCost := w + path.dist[k]
+						req[deltaEdge{dest: v, dist: newCost, source: n}] = true
 					}
-					newCost := w + path.dist[k]
-					heap.Push(&req, deltaEdge{dest: v, dist: newCost, source: n})
 				}
-			}
+				ds_thread <- false
+			}(n)
+
+		}
+		for i := 0; i < len(ds_thread); i++ {
+			<-ds_thread
 		}
 
 		// Relax all request from heavy edges in S
-		for req.Len() != 0 {
-			request := heap.Pop(&req).(deltaEdge)
-			relax(request.dest, request.dist, path.indexOf[request.source.ID()], path, delta, B)
+		ds_thread = make(chan bool, len(req))
+		for request, _ := range req {
+			go func(request deltaEdge) {
+				relax(request.dest, request.dist, path.indexOf[request.source.ID()], path, delta, B)
+				ds_thread <- false
+			}(request)
+		}
+
+		for i := 0; i < len(ds_thread); i++ {
+			<-ds_thread
 		}
 
 		// delete the explore bucket
@@ -366,18 +399,4 @@ type deltaEdge struct {
 	dest   graph.Node
 	dist   float64
 	source graph.Node
-}
-
-// deltaQueue implements a no-dec priority queue.
-type deltaQueue []deltaEdge
-
-func (q deltaQueue) Len() int            { return len(q) }
-func (q deltaQueue) Less(i, j int) bool  { return q[i].dist < q[j].dist }
-func (q deltaQueue) Swap(i, j int)       { q[i], q[j] = q[j], q[i] }
-func (q *deltaQueue) Push(n interface{}) { *q = append(*q, n.(deltaEdge)) }
-func (q *deltaQueue) Pop() interface{} {
-	t := *q
-	var n interface{}
-	n, *q = t[len(t)-1], t[:len(t)-1]
-	return n
 }
