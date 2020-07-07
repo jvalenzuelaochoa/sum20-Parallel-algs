@@ -5,58 +5,70 @@ import (
 
 	"github.com/gonum/graph"
 
-	"fmt"
 	"math"
-	"strconv"
 )
 
-func IsPredecessor(g graph.Graph, s graph.Node, d graph.Node) bool {
+// Helper Method to determine if Node s is a predecessor to node d in graph g. [O(1)]
+func IsPredecessor(g graph.Graph, s graph.Node, d graph.Node, weight Weighting) bool {
 	if g.Edge(s, d) != nil {
-		println("detected edge from " + strconv.Itoa(s.ID()) + " to " + strconv.Itoa(d.ID()))
 		return true
 	} else {
 		return false
 	}
 }
 
+// Check if there are any forbidden nodes in the graphs acording to bellman-Fords predicate.
+// the Forbidden nodes are indicated by overwritting the forbidden input array, which is
+// modified by reference.[O(n)]
 func CheckForbiddenBF(nodes []graph.Node, path Shortest, weight Weighting, pre [][]bool, forbidden []bool) {
-	fmt.Println(nodes)
-	// println("Looking For Forbidden Nodes...")
+	// Auxiliar signal to wait for all threads
+	result := make(chan int, len(nodes))
 	for _, n := range nodes {
 		i := path.indexOf[n.ID()]
-		forbidden[i] = false
-		for _, k := range nodes {
-			j := path.indexOf[k.ID()]
-			if pre[i][j] {
-				// println("Analyzing edge from " + strconv.Itoa(k.ID()) + " to " + strconv.Itoa(n.ID()))
-				w, ok := weight(k, n)
-				if !ok {
-					panic("bf: unexpected invalid weight")
-				}
-				if w < 0 {
-					panic("delta-step: negative edge weight")
-				}
-				if path.dist[path.indexOf[n.ID()]] > (path.dist[path.indexOf[k.ID()]] + w) {
-					distTon := strconv.FormatFloat(path.dist[path.indexOf[n.ID()]], 'f', -1, 64)
-					println(strconv.Itoa(n.ID()) + " is forbidden: " + distTon)
-					forbidden[i] = true
-					continue
+		// Spawn threads for the analysis of each individual node, this does a sweep on al nodes( O(n) )
+		go func(i int, n graph.Node) {
+			forbidden[i] = false
+			for _, k := range nodes {
+				j := path.indexOf[k.ID()]
+				if pre[i][j] {
+					w, ok := weight(k, n)
+					if !ok {
+						panic("bf: unexpected invalid weight")
+					}
+					// forbidden predicate validation
+					if path.dist[path.indexOf[n.ID()]] > (path.dist[path.indexOf[k.ID()]] + w) {
+						forbidden[i] = true
+						continue
+					}
 				}
 			}
-		}
+			result <- i
+		}(i, n)
+	}
+	// Wait for all spawned threads to complete.
+	for i := 0; i < len(nodes); i++ {
+		<-result
 	}
 }
 
+// Helper method to reduce the elements of a boolean array by Or'ing them [O(logn)]
 func OrBoolVec(bool_vec []bool) bool {
+
 	local_vec := make([]bool, len(bool_vec))
+	it_vec := make([]bool, len(bool_vec))
+	// Auxiliar variable for thread synchronization
 	result := make(chan int, len(bool_vec))
+	// Slices in parameters are always sent by reference, so we need to clone
+	// it to avoid messing with the original indormation
 	copy(local_vec, bool_vec)
-	for h := 1; h <= int(math.Ceil(math.Log2(float64(len(bool_vec))))); h++ {
-		fmt.Println(len(bool_vec) / int(math.Ceil(math.Exp2(float64(h)))))
-		it_vec := make([]bool, len(bool_vec))
+
+	for h := 1; h <= int(math.Ceil(math.Log2(float64(len(bool_vec))))); h++ { // [O(logn)]
+		// this method may actually throw off the time complexity??
 		copy(it_vec, local_vec)
+
 		for i := 0; i < len(bool_vec); i++ {
-			go func(i int) {
+			// Spawn threads for comparisons of level h
+			go func(i int) { // [ O(1) ]
 				if i < int(math.Ceil(float64(len(bool_vec))/math.Exp2(float64(h)))) {
 					if 2*i == len(bool_vec)-1 {
 						local_vec[i] = it_vec[2*i]
@@ -67,10 +79,11 @@ func OrBoolVec(bool_vec []bool) bool {
 				result <- i
 			}(i)
 		}
+
+		// Wait for al spawned threads to complete
 		for i := 0; i < len(bool_vec); i++ {
 			<-result
 		}
-		fmt.Println(local_vec)
 	}
 	return local_vec[0]
 }
@@ -100,37 +113,66 @@ func BellmanFord(s graph.Node, g graph.Graph) Shortest {
 	// For simplicity, compute predecesor matrix
 	pre := make([][]bool, len(nodes))
 
-	println("Starting Analysis...")
+	// If two threads panic at the same time, the tester will only recover from one
+	// and the second one will complete the panic, stopping the test eexution. For
+	// this reason, we compute whether each node has negative edges conected to them
+	// in parallel, and combine the results to panic at the end.
+	hasNegative := make([]bool, len(nodes))
 	for _, n := range nodes {
 		i := path.indexOf[n.ID()]
+
+		// Spawn threads to check which nodes preceed others, as well
+		// as determine whether a node has negative edges associated with it.
 		go func(i int, n graph.Node) {
+			// each thread has only one for loop, resulting in O(n)
+
 			pre[i] = make([]bool, len(nodes))
-			for _, k := range nodes {
+
+			for _, k := range nodes { // [O(n)]
 				j := path.indexOf[k.ID()]
-				pre[i][j] = IsPredecessor(g, k, n)
+				pre[i][j] = IsPredecessor(g, k, n, weight)
+
+				if pre[i][j] {
+					w, ok := weight(k, n)
+					if !ok {
+						panic("bf: unexpected invalid weight")
+					}
+					if w < 0 {
+						hasNegative[i] = true
+					}
+				}
+
 			}
 			result <- i
 		}(i, n)
 
 	}
+
+	// Wait for all spawned threds to complete.
 	for i := 0; i < len(nodes); i++ {
 		<-result
 	}
 
-	forbidden := make([]bool, len(nodes))
-	CheckForbiddenBF(nodes, path, weight, pre, forbidden)
-
-	SomeForbidden := false
-	if SomeForbidden = OrBoolVec(forbidden); SomeForbidden {
-		println("Forbidden nodes detected")
+	// If any nodes contain negative edges, panic
+	if OrBoolVec(hasNegative) {
+		panic("bf: negative edge weight")
 	}
+
+	forbidden := make([]bool, len(nodes))
+
+	// Compute initial forbidden nodes
+	CheckForbiddenBF(nodes, path, weight, pre, forbidden)
+	SomeForbidden := OrBoolVec(forbidden)
+
+	// run algorithm until no forbidden nodes are detected
 	for SomeForbidden {
+
 		for i, n := range nodes {
 
 			go func(i int, n graph.Node) {
 				if forbidden[i] {
 					min := math.Inf(1)
-					for j, k := range nodes {
+					for j, k := range nodes { // [ O(n) ]
 						if pre[i][j] {
 							w, ok := weight(k, n)
 							if !ok {
@@ -141,7 +183,6 @@ func BellmanFord(s graph.Node, g graph.Graph) Shortest {
 							}
 							if min > (path.dist[path.indexOf[k.ID()]] + w) {
 								min = path.dist[path.indexOf[k.ID()]] + w
-								println("Overwrite distance to node " + strconv.Itoa(n.ID()) + " to " + strconv.FormatFloat(min, 'f', -1, 64))
 								path.set(path.indexOf[n.ID()], min, path.indexOf[k.ID()])
 							}
 						}
@@ -156,24 +197,20 @@ func BellmanFord(s graph.Node, g graph.Graph) Shortest {
 			<-result
 		}
 
+		// Update to the new set of forbidden nodes
 		CheckForbiddenBF(nodes, path, weight, pre, forbidden)
-		fmt.Println(forbidden)
-
-		if SomeForbidden = OrBoolVec(forbidden); SomeForbidden {
-			println("Forbidden nodes detected")
-		}
-
-		fmt.Println(SomeForbidden)
+		SomeForbidden = OrBoolVec(forbidden)
 	}
 	return path
 }
 
+// Helper method to update values in the Shortest variable given the the relaxation criteria.
 func relax(d graph.Node, c float64, s int, path Shortest, delta float64, B map[int]*priorityQueue) {
+
 	if c < path.dist[path.indexOf[d.ID()]] {
-		// fmt.Println("Relaxing node " + strconv.Itoa(d.ID()))
 		path.set(path.indexOf[d.ID()], c, s)
+		// if current bucket doesn't exist, create it
 		if B[int(c/delta)] == nil {
-			// fmt.Println("Created bucket: " + strconv.Itoa(int(c/delta)))
 			B[int(c/delta)] = &priorityQueue{}
 		}
 		heap.Push(B[int(c/delta)], distanceNode{node: d, dist: c})
@@ -208,6 +245,7 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 
 	hasNegative := make([]bool, len(nodes))
 
+	// Compute heavy and light edges on a per node basis [ O(n) ]
 	for _, n := range nodes {
 		i := path.indexOf[n.ID()]
 		go func(i int, n graph.Node) {
@@ -216,7 +254,6 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 			for _, k := range nodes {
 				j := path.indexOf[k.ID()]
 				if g.Edge(n, k) != nil {
-					// println("detected edge from " + strconv.Itoa(n.ID()) + " to " + strconv.Itoa(k.ID()))
 					w, ok := weight(n, k)
 					if !ok {
 						panic("delta-step: unexpected invalid weight")
@@ -243,22 +280,24 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 		<-result
 	}
 
+	// If any elements have negative edges associated with them, panic [O(logn)]
 	if OrBoolVec(hasNegative) {
 		panic("delta-step: negative edge weight")
 	}
 
+	// This will be our Buckets variable
 	B := make(map[int]*priorityQueue)
 
+	// Create first bucket and insert source element into it
 	B[0] = &priorityQueue{}
-
 	heap.Push(B[0], distanceNode{node: s, dist: 0})
 
 	i := 0
+
+	//This loop will execute until all buckets have been deleted.
 	for len(B) != 0 {
-		// fmt.Println("Checking bucket " + strconv.Itoa(i))
 		S := priorityQueue{}
 		req := deltaQueue{}
-		fmt.Println(B[i].Len())
 		for B[i].Len() != 0 {
 			req = deltaQueue{}
 			for B[i].Len() != 0 {
@@ -279,12 +318,11 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 				heap.Push(&S, distanceNode{node: n, dist: 0})
 			}
 
+			// Relax all request from light edges in B[i]
 			for req.Len() != 0 {
 				request := heap.Pop(&req).(deltaEdge)
 				relax(request.dest, request.dist, path.indexOf[request.source.ID()], path, delta, B)
 			}
-
-			fmt.Println(B[i].Len())
 		}
 
 		req = deltaQueue{}
@@ -303,10 +341,14 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 				}
 			}
 		}
+
+		// Relax all request from heavy edges in S
 		for req.Len() != 0 {
 			request := heap.Pop(&req).(deltaEdge)
 			relax(request.dest, request.dist, path.indexOf[request.source.ID()], path, delta, B)
 		}
+
+		// delete the explore bucket
 		delete(B, i)
 		i++
 
