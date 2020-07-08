@@ -203,10 +203,10 @@ func BellmanFord(s graph.Node, g graph.Graph) Shortest {
 }
 
 // Helper method to update values in the Shortest variable given the the relaxation criteria.
-func relax(d graph.Node, c float64, s int, path Shortest, delta float64, B map[int]map[graph.Node]bool) {
+func relax(d graph.Node, c float64, s graph.Node, path Shortest, delta float64, B map[int]map[graph.Node]bool) {
 
 	if c < path.dist[path.indexOf[d.ID()]] {
-		path.set(path.indexOf[d.ID()], c, s)
+		path.set(path.indexOf[d.ID()], c, path.indexOf[s.ID()])
 		// if current bucket doesn't exist, create it
 		if B[int(c/delta)] == nil {
 			B[int(c/delta)] = make(map[graph.Node]bool)
@@ -331,7 +331,7 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 			// Relax all request from light edges in B[i]
 			for request, _ := range req {
 				// go func(request deltaEdge) {
-				relax(request.dest, request.dist, path.indexOf[request.source.ID()], path, delta, B)
+				relax(request.dest, request.dist, request.source, path, delta, B)
 				// ds_thread <- false
 				// }(request)
 			}
@@ -372,7 +372,7 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 		ds_thread = make(chan bool, len(req))
 		for request, _ := range req {
 			go func(request deltaEdge) {
-				relax(request.dest, request.dist, path.indexOf[request.source.ID()], path, delta, B)
+				relax(request.dest, request.dist, request.source, path, delta, B)
 				ds_thread <- false
 			}(request)
 		}
