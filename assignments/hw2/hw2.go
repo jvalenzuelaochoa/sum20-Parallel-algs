@@ -3,7 +3,10 @@ package hw2
 import (
 	"github.com/gonum/graph"
 
+	"fmt"
 	"math"
+	"strconv"
+	"sync"
 )
 
 // Helper Method to determine if Node s is a predecessor to node d in graph g. [O(1)]
@@ -203,16 +206,24 @@ func BellmanFord(s graph.Node, g graph.Graph) Shortest {
 }
 
 // Helper method to update values in the Shortest variable given the the relaxation criteria.
-func relax(d graph.Node, c float64, s graph.Node, path Shortest, delta float64, B map[int]map[graph.Node]bool) {
+func relax(d graph.Node, c float64, s graph.Node, path Shortest, delta float64, B map[int]map[graph.Node]bool, lock *sync.RWMutex) {
 
 	if c < path.dist[path.indexOf[d.ID()]] {
 		path.set(path.indexOf[d.ID()], c, path.indexOf[s.ID()])
 		// if current bucket doesn't exist, create it
 		if B[int(c/delta)] == nil {
+			// lock.Lock()
 			B[int(c/delta)] = make(map[graph.Node]bool)
+			// lock.Unlock()
 		}
+		// lock.Lock()
 		B[int(c/delta)][d] = true
+		// lock.Unlock()
 	}
+
+	fmt.Println("B: ")
+	fmt.Println(B)
+
 }
 
 // Apply the delta-stepping algorihtm to Graph and return
@@ -222,7 +233,7 @@ func relax(d graph.Node, c float64, s graph.Node, path Shortest, delta float64, 
 // but you can use another struct if that makes more sense
 // for the concurrency model you chose.
 func DeltaStep(s graph.Node, g graph.Graph) Shortest {
-	delta := float64(3)
+	delta := float64(.8)
 	if !g.Has(s) {
 		return Shortest{from: s}
 	}
@@ -235,6 +246,9 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 
 	nodes := g.Nodes()
 	path := newShortestFrom(s, nodes)
+
+	b_lock := sync.RWMutex{}
+	req_lock := sync.RWMutex{}
 
 	ds_thread := make(chan bool, len(nodes))
 	// For simplicity, compute heavy/light matrix
@@ -294,6 +308,8 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 
 	//This loop will execute until all buckets have been deleted.
 	for len(B) != 0 {
+		fmt.Println("B: ")
+		fmt.Println(B)
 		S := make(map[graph.Node]bool)
 		req := make(map[deltaEdge]bool)
 		for B[i] != nil {
@@ -312,7 +328,9 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 							panic("delta-step: unexpected invalid weight")
 						}
 						newCost := w + path.dist[k]
+						req_lock.Lock()
 						req[deltaEdge{dest: v, dist: newCost, source: n}] = true
+						req_lock.Unlock()
 					}
 				}
 				// ds_thread <- false
@@ -320,6 +338,9 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 
 				S[n] = true
 			}
+			fmt.Println("B[" + strconv.Itoa(i) + "]")
+			fmt.Print("S: ")
+			fmt.Println(S)
 
 			// for i := 0; i < len(B[i]); i++ {
 			// 	<-ds_thread
@@ -331,10 +352,13 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 			// Relax all request from light edges in B[i]
 			for request, _ := range req {
 				// go func(request deltaEdge) {
-				relax(request.dest, request.dist, request.source, path, delta, B)
+				relax(request.dest, request.dist, request.source, path, delta, B, &b_lock)
 				// ds_thread <- false
 				// }(request)
 			}
+
+			fmt.Print("req: ")
+			fmt.Println(req)
 
 			// for i := 0; i < len(ds_thread); i++ {
 			// 	<-ds_thread
@@ -344,6 +368,10 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 
 		req = make(map[deltaEdge]bool)
 
+		fmt.Print("S: ")
+		fmt.Println(S)
+
+		S_len := len(S)
 		ds_thread := make(chan bool, len(S))
 		for n, _ := range S {
 			delete(S, n)
@@ -352,36 +380,46 @@ func DeltaStep(s graph.Node, g graph.Graph) Shortest {
 				for _, v := range g.From(n) {
 					j := path.indexOf[v.ID()]
 					if heavy[k][j] {
+						fmt.Println("Checking edge from " + strconv.Itoa(k) + " to " + strconv.Itoa(j))
 						w, ok := weight(n, v)
 						if !ok {
 							panic("delta-step: unexpected invalid weight")
 						}
 						newCost := w + path.dist[k]
+						req_lock.Lock()
 						req[deltaEdge{dest: v, dist: newCost, source: n}] = true
+						req_lock.Unlock()
 					}
 				}
 				ds_thread <- false
 			}(n)
 
 		}
-		for i := 0; i < len(ds_thread); i++ {
+		for i := 0; i < S_len; i++ {
 			<-ds_thread
 		}
+
+		fmt.Print("req: ")
+		fmt.Println(req)
 
 		// Relax all request from heavy edges in S
 		ds_thread = make(chan bool, len(req))
 		for request, _ := range req {
 			go func(request deltaEdge) {
-				relax(request.dest, request.dist, request.source, path, delta, B)
+				relax(request.dest, request.dist, request.source, path, delta, B, &b_lock)
 				ds_thread <- false
 			}(request)
 		}
 
-		for i := 0; i < len(ds_thread); i++ {
+		for i := 0; i <= len(ds_thread); i++ {
 			<-ds_thread
 		}
 
 		// delete the explore bucket
+
+		fmt.Println("B: ")
+
+		fmt.Println(B)
 		delete(B, i)
 		i++
 
